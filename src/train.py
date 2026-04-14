@@ -44,10 +44,12 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     :param cfg: A DictConfig configuration composed by Hydra.
     :return: A tuple with metrics and dict with all instantiated objects.
     """
+    #* 提到的 @task_wrapper 是一种容错/收尾机制，尤其适合批量实验场景，失败时也能记录上下文信息
     # Pipeline launcher initializes the modules needed for the pipeline to run.
     # It also serves as a context manager, so all resources are properly closed after the pipeline is done.
     with pipeline_launcher(cfg) as pipeline_modules:
 
+        #* 训练分支
         if cfg.get("train"):
             command_line_logger.info("Starting training!")
             pipeline_modules.trainer.fit(
@@ -57,6 +59,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             )
         train_metrics = pipeline_modules.trainer.callback_metrics
 
+        #* 测试分支
         if cfg.get("test"):
             command_line_logger.info("Starting testing!")
             ckpt_path = None

@@ -99,6 +99,9 @@ class BaseClusteringModule(LightningModule):
         batch: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """
+        initialization_step() 是聚类模块的“冷启动状态机核心”：
+        在中心点（centroids）尚未就绪前，先攒数据做初始化，再平滑切换到正常训练。
+
         Perform a model step that occurs before centroids are initialized.
 
         This step is used to buffer points for initialization and, if the buffer is
@@ -111,8 +114,15 @@ class BaseClusteringModule(LightningModule):
 
         Args:
             batch: Data points of shape (batch_size, n_features)
+
+        Returns:
+            assignments: Cluster assignments of shape (batch_size,)
+            embeddings: Embeddings of shape (batch_size, n_features)
+            loss: Loss value. Tensor of shape (1,)
         """
-        self._buffer_points(batch)
+
+        self._buffer_points(batch)  #* 把新 batch 添加到缓冲区
+        #* 缓冲区还没满（< 3072），返回零 loss，等下一个 batch
         if self.init_buffer.shape[0] < self.init_buffer_size:
             centroid_zero_embeddings = torch.zeros_like(
                 self.centroids.data, dtype=batch.dtype, device=self.device
@@ -127,17 +137,22 @@ class BaseClusteringModule(LightningModule):
                 batch.shape[0], dtype=torch.long, device=self.device
             )
             return batch_zero_assignments, batch_zero_embeddings, loss
+        #* 缓冲区满了！触发 KMeans++ 初始化
         else:
             self.init_centroids = torch.zeros_like(
                 self.centroids.data, dtype=batch.dtype, device=self.device
             )
-            # This function is rank zero only, so only the buffer from the first device
+            # This function is rank zero (i.e., main process) only, so only the buffer from the first device
             # is used to initialize the centroids
             self.compute_initial_centroids(self.init_buffer)
-            self.is_initial_step = True
-            self.init_buffer = torch.tensor([], device=self.device)
+            self.is_initial_step = True #* 标记初始化步骤完成
+            self.init_buffer = torch.tensor([], device=self.device) #* 清空缓冲区
 
-            if self.update_manually:
+            '''
+            手动更新：立刻把中心“拍”到初始化值，快、直接，但不通过优化器。
+            非手动更新：先返回一个对齐损失，让优化器在下一步把参数推到初始化值，更“训练流程一致”。
+            '''
+            if self.update_manually: #* 如果手动更新中心点，则直接返回
                 # If we are updating manually, we set the centroids to the initial
                 # centroids without gradients
                 self.centroids[:] = self.init_centroids.data
@@ -145,7 +160,7 @@ class BaseClusteringModule(LightningModule):
                 assignments = torch.argmin(distances, dim=1).to(self.device)
                 return assignments, self.centroids[assignments], None
 
-            loss = self.init_loss_function(self.centroids, self.init_centroids)
+            loss = self.init_loss_function(self.centroids, self.init_centroids) #* 计算初始化损失
             distances = self.distance_function.compute(batch, self.init_centroids)
             assignments = torch.argmin(distances, dim=1).to(self.device)
             return assignments, self.init_centroids[assignments], loss

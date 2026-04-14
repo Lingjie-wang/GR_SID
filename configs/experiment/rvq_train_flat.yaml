@@ -229,6 +229,8 @@ extras:
   print_config: true
 optim:
   optimizer:
+    _target_: torch.optim.Adam
+    _partial_: true
     lr: 0.001
 eval:
   evaluator:

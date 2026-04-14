@@ -215,7 +215,7 @@ class ResidualQuantization(LightningModule):
 
             # Determine whether to train the current layer
             train_layer = False
-            if self.trainer.state.fn == TrainerFn.FITTING:
+            if self.trainer.state.fn == TrainerFn.FITTING: #* 训练阶段
                 # If we are training layer-wise, we only train the current layer.
                 if self.train_layer_wise:
                     train_layer = idx == self.current_layer
@@ -226,6 +226,7 @@ class ResidualQuantization(LightningModule):
                     # initialization of subsequent layers could require a special
                     # optimization step that should not be applied to
                     # already-initialized layers.
+                    #* 如果当前层已经初始化，但最后一层没有初始化，则不训练当前层
                     if (
                         self.quantization_layer_list[idx].is_initialized
                         and not self.quantization_layer_list[-1].is_initialized
@@ -235,14 +236,16 @@ class ResidualQuantization(LightningModule):
                     # layers as long as the previous layer produced valid quantized
                     # embeddings, meaning it has been initialized or is currently in
                     # its initialization step.
+                    #* 如果当前层是第一层，则训练当前层
                     elif idx == 0:
                         train_layer = True
+                    #* 如果当前层的前一层已经初始化，或者在前一层的初始化步骤中，则训练当前层
                     elif (
                         self.quantization_layer_list[idx - 1].is_initialized
                         or self.quantization_layer_list[idx - 1].is_initial_step
                     ):
                         train_layer = True
-
+            #* 如果需要训练当前层，则调用 model_step 方法
             if train_layer:
                 # We call model step inside forward because we need to get the
                 # quantization layer's loss, which is computed in the model step
@@ -250,6 +253,7 @@ class ResidualQuantization(LightningModule):
                     current_residuals
                 )
                 quantization_loss += layer_loss
+            #* 如果不需要训练当前层，则调用 predict_step 方法
             else:
                 layer_ids, layer_embeddings = layer.predict_step(current_residuals)
 
@@ -280,21 +284,24 @@ class ResidualQuantization(LightningModule):
                     Shape (batch_size, n_layers)
             all_residuals: The residuals at each layer, unless self.track_residuals is
                 False, in which case this is None.
-                    Shape (batch_size, n_features, n_layers)
-            quantization_loss: The cumulative loss from the quantization layers.
-            reconstruction_loss: The reconstruction loss.
+                    Shape (batch_size, n_features, n_layers) 
+            * p.s. n_featrues 代表的是维度
+            * quantization_loss: The cumulative loss from the quantization layers.
+            * reconstruction_loss: The reconstruction loss.
         """
         input_embeddings = model_input.transformed_features["input_embedding"].to(
             self.device
         )
+        #* normalization_layer: 把输入 embedding 做归一化/预处理
         normalized_input_embeddings = self.normalization_layer(input_embeddings)
+        #* encodeer: 把归一化后的向量编码到量化空间
         encoded_embeddings = self.encoder(normalized_input_embeddings)
         (
             cluster_ids,
             all_residuals,
             quantized_embeddings,
             quantization_loss,
-        ) = self.forward(encoded_embeddings)
+        ) = self.forward(encoded_embeddings) #* 多层残差量化：真正“多层”逻辑在 forward 里
 
         if (
             self.trainer.state.fn != TrainerFn.PREDICTING
@@ -440,19 +447,19 @@ class ResidualQuantization(LightningModule):
             )
 
         if (
-            self.train_layer_wise
-            and self.global_step % self.steps_per_layer == 0
+            self.train_layer_wise #* 开启分层训练模式
+            and self.global_step % self.steps_per_layer == 0 #* 到了当前层的训练步数配额（每 steps_per_layer 步检查一次）
             and (
                 self.quantization_layer_list[self.current_layer].is_initialized
                 or self.current_layer < 0
-            )
+            ) #* 这一层必须已经初始化完成，才允许切到下一层；或是在重建损失预热阶段
             and self.current_layer < self.n_layers - 1
         ):
             self.log_if_true(
                 f"Finished training layer {self.current_layer} of {self.n_layers}",
                 self.verbose,
             )
-            self.current_layer += 1
+            self.current_layer += 1 #* 切到下一层
 
         return loss
 
