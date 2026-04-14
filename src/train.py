@@ -9,6 +9,8 @@ from omegaconf import DictConfig
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
 # ------------------------------------------------------------------------------------ #
+#* 这段注释在解释 rootutils.setup_root(...) 的三个核心作用：
+#* 路径可导入、根目录可定位、环境变量可加载。它本质是在“统一运行环境”。
 # the setup_root above is equivalent to:
 # - adding project root dir to PYTHONPATH
 #       (so you don't need to force user to install project as a package)
@@ -44,10 +46,12 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     :param cfg: A DictConfig configuration composed by Hydra.
     :return: A tuple with metrics and dict with all instantiated objects.
     """
+    #* 提到的 @task_wrapper 是一种容错/收尾机制，尤其适合批量实验场景，失败时也能记录上下文信息
     # Pipeline launcher initializes the modules needed for the pipeline to run.
     # It also serves as a context manager, so all resources are properly closed after the pipeline is done.
     with pipeline_launcher(cfg) as pipeline_modules:
 
+        #* 训练分支
         if cfg.get("train"):
             command_line_logger.info("Starting training!")
             pipeline_modules.trainer.fit(
@@ -57,6 +61,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             )
         train_metrics = pipeline_modules.trainer.callback_metrics
 
+        #* 测试分支
         if cfg.get("test"):
             command_line_logger.info("Starting testing!")
             ckpt_path = None
@@ -100,7 +105,7 @@ def main(cfg: DictConfig) -> Optional[float]:
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
     extras(cfg)
     job_launcher = LocalJobLauncher(cfg=cfg)
-    job_launcher.launch(function_to_run=train)
+    job_launcher.launch(function_to_run=train) #* 启动 train 函数
 
 
 if __name__ == "__main__":

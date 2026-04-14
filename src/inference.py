@@ -35,7 +35,7 @@ def inference(cfg: DictConfig) -> Dict[str, Any]:
             return_predictions=False,
         )
 
-
+# 使用 configs/inference.yaml 作为默认入口配置
 @hydra.main(version_base="1.3", config_path="../configs", config_name="inference.yaml")
 def main(cfg: DictConfig) -> None:
     """Main entry point for inference.

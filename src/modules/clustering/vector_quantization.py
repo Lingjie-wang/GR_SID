@@ -88,7 +88,8 @@ class VectorQuantization(BaseClusteringModule):
     ) -> Tuple[torch.Tensor, torch.Tensor, bool]:
         """
         Perform a forward pass of the K-Means model on the batch and compute the loss.
-
+        ? 一定要是 K-Means Model 吗？不能是其他的残差量化方法吗？
+        ? 我的理解是：这里的注释是其他地方复制过来的，不一定是 K-Means model
         This function may be called by another LightningModule, such as a residual
         K-means module, that is using this MiniBatchKMeans module as a submodule.
 

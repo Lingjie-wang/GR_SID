@@ -13,14 +13,14 @@ train: true
 test: false
 ckpt_path: null
 seed: 42
-data_loading:
+data_loading: # 输入是 item id，映射到 embedding
   features_config:
     features:
     - name: id
       num_placeholder_tokens: 0
       is_item_ids: true
       embeddings:
-        _target_: torch.load
+        _target_: torch.load 
         _args_:
         - _target_: src.utils.file_utils.open_local_or_remote
           file_path: ${embedding_path}
@@ -43,7 +43,7 @@ data_loading:
         id: ${data_loading.features_config.features[0].embeddings}
       num_placeholder_tokens_map: ${create_map_from_list_of_dicts:${data_loading.features_config.features},
         "name", "num_placeholder_tokens"}
-      preprocessing_functions:
+      preprocessing_functions: # 处理链路
       - _target_: src.data.loading.components.pre_processing.filter_features_to_consider
         _partial_: true
       - _target_: src.data.loading.components.pre_processing.convert_to_dense_numpy_array
@@ -56,7 +56,7 @@ data_loading:
         embedding_field_to_add: embedding
       field_type_map: ${create_map_from_list_of_dicts:${data_loading.features_config.features},
         "name", "type"}
-  datamodule:
+  datamodule: # 训练/验证/测试都从 items 目录读取
     _target_: src.data.loading.datamodules.sequence_datamodule.ItemDataModule
     train_dataloader_config:
       _target_: src.data.loading.components.interfaces.ItemDataloaderConfig
@@ -134,22 +134,22 @@ data_loading:
           embedding: input_embedding
       dataset_config: ${data_loading.dataset_config.dataset}
       limit_files: null
-model:
-  _target_: src.modules.clustering.residual_quantization.ResidualQuantization
+model: #* 模型 model：ResidualQuantization + MiniBatchKMeans
+  _target_: src.modules.clustering.residual_quantization.ResidualQuantization #* ResidualQuantization
   track_residuals: true
   verbose: true
   train_layer_wise: true
   normalize_residuals: true
   input_dim: ${embedding_dim}
   n_layers: ${num_hierarchies}
-  init_buffer_size: 3072
-  quantization_layer:
-    _target_: src.models.modules.clustering.mini_batch_kmeans.MiniBatchKMeans
+  init_buffer_size: 3072 #* 缓冲大小
+  quantization_layer: #* 量化层
+    _target_: src.models.modules.clustering.mini_batch_kmeans.MiniBatchKMeans #*MiniBatchKMeans
     n_clusters: ${codebook_width}
     n_features: ${model.input_dim}
     distance_function:
       _target_: src.components.distance_functions.SquaredEuclideanDistance
-    initializer:
+    initializer: #* 初始化器 Kmeans++
       _target_: src.components.clustering_initializers.KMeansPlusPlusInitInitializer
       n_clusters: ${model.quantization_layer.n_clusters}
       distance_function: ${model.quantization_layer.distance_function}

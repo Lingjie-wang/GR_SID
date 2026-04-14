@@ -133,7 +133,7 @@ class STEQuantization(QuantizationStrategy):
             reconstruction_loss_embeddings: .
         """
         ids, embeddings = self.get_nearest_neighbors(codebook, batch)
-        reconstruction_loss_embeddings = batch + (embeddings - batch).detach()
+        reconstruction_loss_embeddings = batch + (embeddings - batch).detach() #? 解释：前向硬量化，反向可训练，具体解释见【实验记录】
         return ids, embeddings, reconstruction_loss_embeddings
 
 

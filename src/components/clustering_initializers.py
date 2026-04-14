@@ -138,8 +138,8 @@ class KMeansPlusPlusInitInitializer(ClusteringInitializer):
             # Compute distances to the nearest existing centroid
             min_distances = torch.min(
                 self.distance_function.compute(buffer, centroids[:i]), dim=1
-            )[0]
-            if min_distances.sum() == 0:
+            )[0] #* 注意：min_distances 是每样本最近距离向量，不是单值；min 返回两个结果，一个是每一行的最小值张量（[0]），一个是每一行最小值位置索引([1])
+            if min_distances.sum() == 0: #* 全体最近距离均为 0 
                 # All points are already centroids, so we simply assign the remaining
                 # centroids randomly
                 centroids[i:] = buffer[
@@ -150,6 +150,7 @@ class KMeansPlusPlusInitInitializer(ClusteringInitializer):
                 break
 
             # Choose the next centroid with probability proportional to distance
+            #* 距离越大，抽中的概率越高
             next_centroid_idx = torch.multinomial(min_distances, num_samples=1)
 
             # Assign the next centroid
@@ -211,6 +212,7 @@ class ClusteringModuleInitializer(ClusteringInitializer):
     def forward(self, buffer: torch.Tensor) -> torch.Tensor:
         """
         Initialize centroids using self.clustering_module.
+        * 用一个已有的聚类模块 self.clustering_module 在 buffer 上迭代，得到一组可作为初始化的中心点。
 
         Args:
             buffer: Data points of shape (batch_size, n_features)

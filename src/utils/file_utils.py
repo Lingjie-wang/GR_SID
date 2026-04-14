@@ -37,6 +37,8 @@ def file_exists_local_or_remote(file_path: str) -> bool:
 @retry()
 def open_local_or_remote(file_path: str, mode: str = "r") -> BinaryIO:
     fs, _ = url_to_fs(file_path)
+    if "w" in mode and fs.protocol in ("file", "local", ("file", "local")):
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
     return fs.open(file_path, mode)
 
 

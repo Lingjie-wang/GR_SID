@@ -142,13 +142,13 @@ model:
   normalize_residuals: false
   input_dim: ${embedding_dim}
   n_layers: ${num_hierarchies}
-  normalization_layer:
+  normalization_layer: #* 和 R-VQ 的关键差异 1
     _target_: torch.nn.Sequential
     _args_:
     - _target_: torch.nn.BatchNorm1d
       num_features: ${model.input_dim}
     - _target_: src.models.components.network_blocks.normalize_layer.NormalizeLayer
-  encoder:
+  encoder: #* 和 R-VQ 的关键差异 2
     _target_: src.models.components.network_blocks.mlp.MLP
     input_dim: ${model.input_dim}
     hidden_dim_list:
@@ -159,7 +159,7 @@ model:
     activation:
       _target_: torch.nn.ReLU
       _partial_: true
-  decoder:
+  decoder: #* 和 R-VQ 的关键差异 3
     _target_: src.models.components.network_blocks.mlp.MLP
     input_dim: ${model.encoder.output_dim}
     hidden_dim_list:
@@ -171,27 +171,27 @@ model:
       _target_: torch.nn.ReLU
       _partial_: true
   init_buffer_size: 3072
-  quantization_layer:
-    _target_: src.modules.clustering.vector_quantization.VectorQuantization
+  quantization_layer: #* 量化层
+    _target_: src.modules.clustering.vector_quantization.VectorQuantization #* VectorQuantization，和 R-VQ 是一样的，和 RK-means 是不一样的 
     n_clusters: ${codebook_width}
     n_features: ${model.encoder.output_dim}
     distance_function:
       _target_: src.components.distance_functions.SquaredEuclideanDistance
     quantization_strategy:
-      _target_: src.components.quantization_strategies.STEQuantization
+      _target_: src.components.quantization_strategies.STEQuantization #?
       distance_function: ${model.quantization_layer.distance_function}
-      compute_reconstruction_loss_embeddings: true
-    initializer:
-      _target_: src.components.clustering_initializers.ClusteringModuleInitializer
+      compute_reconstruction_loss_embeddings: true #?
+    initializer: #* 初始化器不是 KMeans ++ 了，下面有进一步的解释
+      _target_: src.components.clustering_initializers.ClusteringModuleInitializer #* 冷启动不是直接 KMeans++，而是外层 ClusteringModuleInitializer 包一层 MiniBatchKMeans；这个 MiniBatchKMeans 的内部初始化器才是 KMeans++
       n_clusters: ${model.quantization_layer.n_clusters}
       initialize_on_cpu: false
       clustering_module:
-        _target_: src.models.modules.clustering.mini_batch_kmeans.MiniBatchKMeans
+        _target_: src.models.modules.clustering.mini_batch_kmeans.MiniBatchKMeans #* 外层 ClusteringModuleInitializer 包一层 MiniBatchKMeans
         n_clusters: ${model.quantization_layer.n_clusters}
         n_features: ${model.quantization_layer.n_features}
         distance_function: ${model.quantization_layer.distance_function}
         initializer:
-          _target_: src.components.clustering_initializers.KMeansPlusPlusInitInitializer
+          _target_: src.components.clustering_initializers.KMeansPlusPlusInitInitializer #* 这个 MiniBatchKMeans 的内部初始化器才是 KMeans++
           n_clusters: ${model.quantization_layer.n_clusters}
           distance_function: ${model.quantization_layer.distance_function}
           initialize_on_cpu: false
@@ -204,7 +204,7 @@ model:
       beta: 0.25
       reduction: mean
     optimizer: null
-  reconstruction_loss_function:
+  reconstruction_loss_function: #* 重建损失函数，如果没有说明的话重建损失会直接置零，比如说 R-VQ 方法
     _target_: torch.nn.MSELoss
     reduction: mean
   reconstruction_loss_weight: 1.0

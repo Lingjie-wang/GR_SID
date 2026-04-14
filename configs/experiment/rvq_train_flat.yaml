@@ -143,17 +143,17 @@ model:
   input_dim: ${embedding_dim}
   n_layers: ${num_hierarchies}
   init_buffer_size: 3072
-  quantization_layer:
-    _target_: src.modules.clustering.vector_quantization.VectorQuantization
+  quantization_layer: #* 量化层
+    _target_: src.modules.clustering.vector_quantization.VectorQuantization #* VectorQuantization， 和 RK-means 不同
     n_clusters: ${codebook_width}
     n_features: ${model.input_dim}
     distance_function:
       _target_: src.components.distance_functions.SquaredEuclideanDistance
-    quantization_strategy:
+    quantization_strategy: #* 默认量化策略是 STE
       _target_: src.components.quantization_strategies.STEQuantization
       distance_function: ${model.quantization_layer.distance_function}
-      compute_reconstruction_loss_embeddings: false
-    initializer:
+      compute_reconstruction_loss_embeddings: false #* 我的理解：R-VQ 没有配置 reconstruction_loss_function，这里还显式地说明了一下
+    initializer: #* 初始化器是 KMeans++
       _target_: src.components.clustering_initializers.KMeansPlusPlusInitInitializer
       n_clusters: ${model.quantization_layer.n_clusters}
       initialize_on_cpu: false
@@ -229,6 +229,8 @@ extras:
   print_config: true
 optim:
   optimizer:
+    _target_: torch.optim.Adam
+    _partial_: true
     lr: 0.001
 eval:
   evaluator:

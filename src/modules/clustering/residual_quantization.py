@@ -25,7 +25,7 @@ class ResidualQuantization(LightningModule):
         quantization_layer_list: Optional[nn.ModuleList] = None,
         init_buffer_size: int = 1000,
         training_loop_function: callable = None,
-        quantization_loss_weight: float = 1.0,
+        quantization_loss_weight: float = 1.0, #* 量化损失权重设置了默认值，在 rqvae_train_flat.yaml 中指定了重建损失的权重
         reconstruction_loss_function: Optional[nn.Module] = None,
         reconstruction_loss_weight: float = 0.0,
         normalize_residuals: bool = True,
@@ -179,8 +179,8 @@ class ResidualQuantization(LightningModule):
                     "Either quantization_layer or quantization_layer_list must be provided."
                 )
             return nn.ModuleList(
-                modules=[copy.deepcopy(quantization_layer) for _ in range(n_layers)]
-            )
+                modules=[copy.deepcopy(quantization_layer) for _ in range(n_layers)] # copy.deepcopy(quantization_layer) 循环 n_layers 次
+            ) #? deepcopy 能保证每一层是独立模块，拥有自己的参数、缓存、初始化状态，这是不是意味着 GRID 的 codebook 不是共享参数的那种设置呢？
 
     def forward(
         self, embeddings: torch.Tensor
@@ -215,7 +215,7 @@ class ResidualQuantization(LightningModule):
 
             # Determine whether to train the current layer
             train_layer = False
-            if self.trainer.state.fn == TrainerFn.FITTING:
+            if self.trainer.state.fn == TrainerFn.FITTING: #* 训练阶段
                 # If we are training layer-wise, we only train the current layer.
                 if self.train_layer_wise:
                     train_layer = idx == self.current_layer
@@ -226,6 +226,7 @@ class ResidualQuantization(LightningModule):
                     # initialization of subsequent layers could require a special
                     # optimization step that should not be applied to
                     # already-initialized layers.
+                    #* 如果当前层已经初始化，但最后一层没有初始化，则不训练当前层
                     if (
                         self.quantization_layer_list[idx].is_initialized
                         and not self.quantization_layer_list[-1].is_initialized
@@ -235,14 +236,16 @@ class ResidualQuantization(LightningModule):
                     # layers as long as the previous layer produced valid quantized
                     # embeddings, meaning it has been initialized or is currently in
                     # its initialization step.
+                    #* 如果当前层是第一层，则训练当前层
                     elif idx == 0:
                         train_layer = True
+                    #* 如果当前层的前一层已经初始化，或者在前一层的初始化步骤中，则训练当前层
                     elif (
                         self.quantization_layer_list[idx - 1].is_initialized
                         or self.quantization_layer_list[idx - 1].is_initial_step
                     ):
                         train_layer = True
-
+            #* 如果需要训练当前层，则调用 model_step 方法
             if train_layer:
                 # We call model step inside forward because we need to get the
                 # quantization layer's loss, which is computed in the model step
@@ -250,6 +253,7 @@ class ResidualQuantization(LightningModule):
                     current_residuals
                 )
                 quantization_loss += layer_loss
+            #* 如果不需要训练当前层，则调用 predict_step 方法
             else:
                 layer_ids, layer_embeddings = layer.predict_step(current_residuals)
 
@@ -280,22 +284,30 @@ class ResidualQuantization(LightningModule):
                     Shape (batch_size, n_layers)
             all_residuals: The residuals at each layer, unless self.track_residuals is
                 False, in which case this is None.
-                    Shape (batch_size, n_features, n_layers)
-            quantization_loss: The cumulative loss from the quantization layers.
-            reconstruction_loss: The reconstruction loss.
+                    Shape (batch_size, n_features, n_layers) 
+            * p.s. n_featrues 代表的是维度
+            * quantization_loss: The cumulative loss from the quantization layers.
+            * reconstruction_loss: The reconstruction loss.
         """
+
         input_embeddings = model_input.transformed_features["input_embedding"].to(
             self.device
         )
+        #* normalization_layer: 把输入 embedding 做归一化/预处理
         normalized_input_embeddings = self.normalization_layer(input_embeddings)
+        #* encodeer: 把归一化后的向量编码到量化空间
         encoded_embeddings = self.encoder(normalized_input_embeddings)
         (
             cluster_ids,
             all_residuals,
             quantized_embeddings,
             quantization_loss,
-        ) = self.forward(encoded_embeddings)
+        ) = self.forward(encoded_embeddings) #* 多层残差量化：真正“多层”逻辑在 forward 里
 
+        # 只有同时满足 3 个条件才算 reconstruction_loss：
+        #   当前不是预测阶段（fn != PREDICTING）
+        #   配置了 reconstruction_loss_function
+        #   最后一层量化器已经初始化完毕
         if (
             self.trainer.state.fn != TrainerFn.PREDICTING
             and self.reconstruction_loss_function is not None
@@ -334,8 +346,9 @@ class ResidualQuantization(LightningModule):
             all_residuals,
             quantization_loss,
             reconstruction_loss,
-        ) = self.model_step(model_input)
+        ) = self.model_step(model_input) #* 调用 model_step
 
+        #* 组装总的训练损失
         loss = (
             self.quantization_loss_weight * quantization_loss
             + self.reconstruction_loss_weight * reconstruction_loss
@@ -376,12 +389,15 @@ class ResidualQuantization(LightningModule):
                 self.train_frac_unique_ids(train_frac_unique_ids)
                 self.train_mse(train_mse)
                 for layer_idx in range(self.n_layers):
+                    #* getattr 动态取对象属性
                     layer_frac_unique_metric = getattr(
                         self, f"train_layer_coverages_{layer_idx}"
                     )
                     layer_id_entropy_metric = getattr(
                         self, f"train_layer_id_entropy_{layer_idx}"
                     )
+                    #* 这里看起来像函数调用，其实是“可调用对象”调用。
+                    #* 因为前面取到的是 MeanMetric 实例，它实现了调用接口，所以可以像函数一样喂一个值进去，作用是更新该指标的累计状态。
                     layer_frac_unique_metric(train_layer_coverages[layer_idx])
                     layer_id_entropy_metric(train_layer_id_entropies[layer_idx])
 
@@ -425,6 +441,7 @@ class ResidualQuantization(LightningModule):
 
         # If a training loop function is passed, we call it with the module and the loss
         # Otherwise we use the automatic optimization provided by Lightning
+        #* 这个模块既支持“框架托管优化”（默认），也支持“用户完全接管优化流程”（传入 training_loop_function）
         if self.training_loop_function is not None:
             if self.train_layer_wise:
                 layer_to_check = self.current_layer
@@ -440,19 +457,19 @@ class ResidualQuantization(LightningModule):
             )
 
         if (
-            self.train_layer_wise
-            and self.global_step % self.steps_per_layer == 0
+            self.train_layer_wise #* 开启分层训练模式
+            and self.global_step % self.steps_per_layer == 0 #* 到了当前层的训练步数配额（每 steps_per_layer 步检查一次）
             and (
                 self.quantization_layer_list[self.current_layer].is_initialized
                 or self.current_layer < 0
-            )
+            ) #* 这一层必须已经初始化完成，才允许切到下一层；或是在重建损失预热阶段
             and self.current_layer < self.n_layers - 1
         ):
             self.log_if_true(
                 f"Finished training layer {self.current_layer} of {self.n_layers}",
                 self.verbose,
             )
-            self.current_layer += 1
+            self.current_layer += 1 #* 切到下一层
 
         return loss
 
