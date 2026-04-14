@@ -191,9 +191,13 @@ cython_debug/
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
+<<<<<<< HEAD
 .cursorindexingignore
 
 # ===== Local/project-specific ignores =====
+=======
+.cursorindexingignore# ===== Local/project-specific ignores =====
+>>>>>>> origin/lsy_backup
 .DS_Store
 .vscode/
 .project-root
