@@ -264,6 +264,7 @@ class ResidualQuantization(LightningModule):
                 all_residuals.append(current_residuals)
 
         cluster_ids = torch.stack(cluster_ids, dim=-1)  # batch_size x n_layers
+        #* 注：上面 stack 这里用 dim=-1，表示把“层”这个维度放到最后一维
         all_residuals = (
             torch.stack(all_residuals, dim=-1) if self.track_residuals else None
         )
@@ -331,9 +332,11 @@ class ResidualQuantization(LightningModule):
     def training_step(self, batch: Tuple[ItemData]) -> torch.Tensor:
         """
         Perform a single training step on a batch of data.
+        * 解释：每次只处理一次训练迭代里的一个 batch
 
         Args:
             batch: A batch of data of ItemData type wrapped in a Tuple.
+            * ItemData 外面套了一层元组
 
         Returns:
             loss: The loss value.
@@ -341,6 +344,7 @@ class ResidualQuantization(LightningModule):
         # Lightning wraps the batch in a tuple for training, we get the batch from
         # position 0. This behavior only happens for training_step.
         model_input: ItemData = batch[0]
+        
         (
             cluster_ids,
             all_residuals,

@@ -58,7 +58,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
                 model=pipeline_modules.model,
                 datamodule=pipeline_modules.datamodule,
                 ckpt_path=cfg.get("ckpt_path"),
-            )
+            ) #* 训练入口，进入 Lightning 框架的内部训练循环，在内部循环中会自动回调 training_step
         train_metrics = pipeline_modules.trainer.callback_metrics
 
         #* 测试分支
@@ -68,6 +68,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             # Check if a checkpoint callback is available and if it has a best model path.
             # Note that if multiple checkpoint callbacks are used, only the first one will be used
             # to determine the best model path for testing.
+            #* 什么叫 checkpoint callback ? 见笔记【实验记录】
             checkpoint_callback = getattr(
                 pipeline_modules.trainer, "checkpoint_callback", None
             )
@@ -105,7 +106,7 @@ def main(cfg: DictConfig) -> Optional[float]:
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
     extras(cfg)
     job_launcher = LocalJobLauncher(cfg=cfg)
-    job_launcher.launch(function_to_run=train) #* 启动 train 函数
+    job_launcher.launch(function_to_run=train) #* 启动 train 函数，就是 residual_quantization.py 中的 training_step 
 
 
 if __name__ == "__main__":

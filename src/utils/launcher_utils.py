@@ -189,7 +189,7 @@ def pipeline_launcher(cfg: DictConfig):
     """
 
     try:
-        pipeline_modules: PipelineModules = initialize_pipeline_modules(cfg)
+        pipeline_modules: PipelineModules = initialize_pipeline_modules(cfg) #* 实例化 
         # Log hyperparameters if loggers are present
         if len(pipeline_modules.loggers) > 0:
             command_line_logger.info("Logging hyperparameters!")
