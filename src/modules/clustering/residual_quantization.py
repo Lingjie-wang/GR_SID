@@ -208,6 +208,7 @@ class ResidualQuantization(LightningModule):
         quantization_loss = torch.tensor(0.0).to(self.device)
 
         for idx, layer in enumerate(self.quantization_layer_list):
+            #* 每一层都要进行归一化
             if self.normalize_residuals:
                 current_residuals = nn.functional.normalize(
                     current_residuals, dim=-1
@@ -263,8 +264,9 @@ class ResidualQuantization(LightningModule):
             if self.track_residuals:
                 all_residuals.append(current_residuals)
 
+        #* cluster_ids 在执行 stack 之前时，列表长度是 n_layers
         cluster_ids = torch.stack(cluster_ids, dim=-1)  # batch_size x n_layers
-        #* 注：上面 stack 这里用 dim=-1，表示把“层”这个维度放到最后一维
+        #* 注：上面 stack 这里用 dim=-1，表示把 “layers” 这个维度放到最后一维
         all_residuals = (
             torch.stack(all_residuals, dim=-1) if self.track_residuals else None
         )
@@ -306,9 +308,9 @@ class ResidualQuantization(LightningModule):
         ) = self.forward(encoded_embeddings) #* 多层残差量化：真正“多层”逻辑在 forward 里
 
         # 只有同时满足 3 个条件才算 reconstruction_loss：
-        #   当前不是预测阶段（fn != PREDICTING）
-        #   配置了 reconstruction_loss_function
-        #   最后一层量化器已经初始化完毕
+        #   1.当前不是预测阶段（fn != PREDICTING）
+        #   2.配置了 reconstruction_loss_function
+        #   3.最后一层量化器已经初始化完毕
         if (
             self.trainer.state.fn != TrainerFn.PREDICTING
             and self.reconstruction_loss_function is not None
@@ -392,6 +394,7 @@ class ResidualQuantization(LightningModule):
                 self.last_centroids_norm(last_centroids_norm)
                 self.train_frac_unique_ids(train_frac_unique_ids)
                 self.train_mse(train_mse)
+
                 for layer_idx in range(self.n_layers):
                     #* getattr 动态取对象属性
                     layer_frac_unique_metric = getattr(
@@ -446,6 +449,8 @@ class ResidualQuantization(LightningModule):
         # If a training loop function is passed, we call it with the module and the loss
         # Otherwise we use the automatic optimization provided by Lightning
         #* 这个模块既支持“框架托管优化”（默认），也支持“用户完全接管优化流程”（传入 training_loop_function）
+        #* 默认情况：让 Lightning 自动做 backward、optimizer.step、zero_grad
+        #* 高级情况：你可以注入 training_loop_function，完全接管这些步骤（比如分层初始化期和正常训练期用不同更新策略）
         if self.training_loop_function is not None:
             if self.train_layer_wise:
                 layer_to_check = self.current_layer
