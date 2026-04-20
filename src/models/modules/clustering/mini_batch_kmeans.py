@@ -52,7 +52,7 @@ class MiniBatchKMeans(BaseClusteringModule):
             init_buffer_size=init_buffer_size,
             update_manually=update_manually,
         )
-        self.cluster_counts = torch.zeros(self.n_clusters)
+        self.cluster_counts = torch.zeros(self.n_clusters) #* 到目前为止， cluster 中点的个数
 
     def forward(
         self, batch: torch.Tensor
@@ -71,6 +71,7 @@ class MiniBatchKMeans(BaseClusteringModule):
             batch_cluster_counts: Number of points in each cluster of shape (n_clusters,)
             batch_cluster_sums: Sum of points in each cluster of shape (n_clusters, n_features)
         """
+
         # Compute cluster assignments
         # Note that assignments is automatically detached from the computation graph
         # because it results from argmin
@@ -82,7 +83,7 @@ class MiniBatchKMeans(BaseClusteringModule):
         # Count points in each cluster
         #* 就是把第 0 维（所有样本行）加起来，得到每一列总和，形状变成 (K,)
         batch_cluster_counts = torch.sum(assignments_one_hot, dim=0)
-        self.cluster_counts += batch_cluster_counts
+        self.cluster_counts += batch_cluster_counts # 每个cluster 已经包含的点的数量
         # Accumulate points for each cluster
         batch_cluster_sums = torch.mm(assignments_one_hot.float().t(), batch)
 
@@ -138,12 +139,12 @@ class MiniBatchKMeans(BaseClusteringModule):
         mask_target = batch_cluster_sums[mask] / batch_cluster_counts[mask].unsqueeze(1)
         #* 本 batch 对该簇的更新权重（历史越多，权重越小）
         centroid_weights = batch_cluster_counts[mask] / self.cluster_counts[mask]
-        #* self.cluster_counts 是全局簇命中数
+        #* self.cluster_counts 是全局簇命中数 (到目前为止？)
 
         #* 直接更新参数中心（不走反传），返回 loss=None
         if self.update_manually:
             self.centroids[mask] = self.centroids[mask].data - (
-                (centroids[mask].data - mask_target) * centroid_weights.unsqueeze(1)
+                (centroids[mask].data - mask_target) * centroid_weights.unsqueeze(1) # unsqueeze : (num_active_clusters,) -> (num_active_clusters, 1)
             )
             return assignments, centroids[assignments], None
         #* 不直接改中心，而是构造加权平方误差 loss，让外层优化器去更新

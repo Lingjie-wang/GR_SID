@@ -94,7 +94,8 @@ class VectorQuantization(BaseClusteringModule):
         K-means module, that is using this MiniBatchKMeans module as a submodule.
 
         Calling this function along will not update the centroids, and will not
-        increment self.global_step. If a parent module is using this module as a
+        increment self.global_step.（执行的全局步数， global_step 的上界应该是一个超参数） 
+        If a parent module is using this module as a
         submodule, the parent will be responsible for updating those parameters.
         Otherwise, these will be updated by Lightning after it calls
         training_step.
@@ -110,6 +111,7 @@ class VectorQuantization(BaseClusteringModule):
         if batch.device != self.device:
             batch = batch.to(self.device)
 
+        #* 初始化中心点
         # Initialize centroids using the chosen method
         # Buffer initial batches for better initialization
         if self.is_initial_step:

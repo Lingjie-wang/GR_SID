@@ -18,7 +18,7 @@ class ResidualQuantization(LightningModule):
     def __init__(
         self,
         n_layers: Optional[int] = None,
-        normalization_layer: nn.Module = nn.Identity(),
+        normalization_layer: nn.Module = nn.Identity(), #* nn.Identity() 是“恒等层/空操作层”
         encoder: nn.Module = nn.Identity(),
         decoder: nn.Module = nn.Identity(),
         quantization_layer: Optional[BaseClusteringModule] = None,

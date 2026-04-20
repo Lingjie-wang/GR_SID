@@ -128,7 +128,7 @@ class KMeansPlusPlusInitInitializer(ClusteringInitializer):
         )
 
         # Choose first centroid randomly
-        first_centroid_idx = torch.randint(0, n_samples, (1,), device=buffer.device)
+        first_centroid_idx = torch.randint(0, n_samples, (1,), device=buffer.device) # [0, n_samples-1] ；(1,) 是一维长度为 1 的张量，不是标量
         centroids[0] = buffer[first_centroid_idx]
 
         # Choose remaining centroids
@@ -138,7 +138,8 @@ class KMeansPlusPlusInitInitializer(ClusteringInitializer):
             # Compute distances to the nearest existing centroid
             min_distances = torch.min(
                 self.distance_function.compute(buffer, centroids[:i]), dim=1
-            )[0] #* 注意：min_distances 是每样本最近距离向量，不是单值；min 返回两个结果，一个是每一行的最小值张量（[0]），一个是每一行最小值位置索引([1])
+            )[0] #* 注意：min_distances 是 buffer 中的每个样本到目前已经生成的 centroids 的最近距离，是一个向量，不是单值；min 返回两个结果，一个是每一行的最小值张量（[0]），一个是每一行最小值位置索引([1])
+            
             if min_distances.sum() == 0: #* 全体最近距离均为 0 
                 # All points are already centroids, so we simply assign the remaining
                 # centroids randomly

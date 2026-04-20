@@ -67,7 +67,8 @@ class QuantizationStrategy(ABC):
 
         Returns:
             ids: Indices of the nearest neighbors in the codebook.
-            embeddings: The quantized embeddings.
+            embeddings: The quantized embeddings. 
+            * 注：embedding 指的是用于量化目标的“量化后表示”。 在 STE 分配策略中，指的就是 codebook 中和原始 embedding 最近的 embedding
             reconstruction_loss_embeddings (Optional): The quantized embeddings computed
                 in a way that enables gradient backpropagation through the input
                 embeddings. This is useful for training RQ-VAE-style models where the
@@ -77,6 +78,7 @@ class QuantizationStrategy(ABC):
                 reconstruction loss on the decoded reconstruction_loss_embeddings, so
                 that we can backpropagate through the quantization steps to obtain the
                 gradients for the encoder.
+            * 如何理解 reconstruction_loss_embedding ，可以查看笔记中的【实验记录】
         """
         pass
 

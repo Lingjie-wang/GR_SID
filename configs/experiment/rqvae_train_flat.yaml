@@ -178,9 +178,9 @@ model:
     distance_function:
       _target_: src.components.distance_functions.SquaredEuclideanDistance
     quantization_strategy:
-      _target_: src.components.quantization_strategies.STEQuantization #?
+      _target_: src.components.quantization_strategies.STEQuantization #? 【实验记录】中有进行说明
       distance_function: ${model.quantization_layer.distance_function}
-      compute_reconstruction_loss_embeddings: true #?
+      compute_reconstruction_loss_embeddings: true #? 有关 reconstrution_loss ，【实验记录】中也有进行说明
     initializer: #* 初始化器不是 KMeans ++ 了，下面有进一步的解释
       _target_: src.components.clustering_initializers.ClusteringModuleInitializer #* 冷启动不是直接 KMeans++，而是外层 ClusteringModuleInitializer 包一层 MiniBatchKMeans；这个 MiniBatchKMeans 的内部初始化器才是 KMeans++
       n_clusters: ${model.quantization_layer.n_clusters}

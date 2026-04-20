@@ -99,8 +99,8 @@ class BaseClusteringModule(LightningModule):
         batch: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """
-        initialization_step() 是聚类模块的“冷启动状态机核心”：
-        在中心点（centroids）尚未就绪前，先攒数据做初始化，再平滑切换到正常训练。
+        * initialization_step() 是聚类模块的“冷启动状态机核心”：
+        * 在中心点（centroids）尚未就绪前，先攒数据做初始化，再平滑切换到正常训练。
 
         Perform a model step that occurs before centroids are initialized.
 
@@ -133,6 +133,7 @@ class BaseClusteringModule(LightningModule):
         """
 
         self._buffer_points(batch)  #* 把新 batch 添加到缓冲区
+        
         #* 缓冲区还没满（< 3072），返回零 loss，等下一个 batch
         if self.init_buffer.shape[0] < self.init_buffer_size:
             centroid_zero_embeddings = torch.zeros_like(
