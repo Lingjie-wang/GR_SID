@@ -175,6 +175,8 @@ model:
     _target_: src.modules.clustering.vector_quantization.VectorQuantization #* VectorQuantization，和 R-VQ 是一样的，和 RK-means 是不一样的 
     n_clusters: ${codebook_width}
     n_features: ${model.encoder.output_dim}
+    restart_unused_codes: false
+    restart_noise_scale: 0.01
     distance_function:
       _target_: src.components.distance_functions.SquaredEuclideanDistance
     quantization_strategy:

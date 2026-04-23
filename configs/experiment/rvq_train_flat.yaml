@@ -147,6 +147,8 @@ model:
     _target_: src.modules.clustering.vector_quantization.VectorQuantization #* VectorQuantization， 和 RK-means 不同
     n_clusters: ${codebook_width}
     n_features: ${model.input_dim}
+    restart_unused_codes: false
+    restart_noise_scale: 0.01
     distance_function:
       _target_: src.components.distance_functions.SquaredEuclideanDistance
     quantization_strategy: #* 默认量化策略是 STE

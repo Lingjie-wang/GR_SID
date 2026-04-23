@@ -1,4 +1,5 @@
 import functools
+import logging
 from typing import Optional, Tuple
 
 import torch
@@ -24,6 +25,8 @@ class VectorQuantization(BaseClusteringModule):
             lr=0.5,
         ),
         init_buffer_size: int = 1000,
+        restart_unused_codes: bool = False,
+        restart_noise_scale: float = 0.01,
     ):
         """
         Initialize the VectorQuantization module.
@@ -36,6 +39,8 @@ class VectorQuantization(BaseClusteringModule):
             optimizer: Optimizer to use for training.
             init_method: Initialization method ("random" or "k-means++").
             init_buffer_size: Number of points to buffer for initialization.
+            restart_unused_codes: Whether to restart unused codes during training.
+            restart_noise_scale: Scale of the noise to add when restarting unused codes.
         """
 
         super().__init__(
@@ -49,6 +54,61 @@ class VectorQuantization(BaseClusteringModule):
         )
 
         self.quantization_strategy = quantization_strategy
+        self.restart_unused_codes = restart_unused_codes
+        self.restart_noise_scale = restart_noise_scale
+        self.last_restart_count = 0
+
+    @torch.no_grad()
+    def _tile_with_noise(self, vectors: torch.Tensor, target_n: int) -> torch.Tensor:
+        """Tile vectors and add small noise so we can sample enough restart candidates."""
+        n_vectors, embed_dim = vectors.shape
+        n_repeats = (target_n + n_vectors - 1) // n_vectors
+        std = vectors.new_ones(embed_dim) * self.restart_noise_scale / (embed_dim**0.5)
+        vectors = vectors.repeat(n_repeats, 1)
+        vectors = vectors + torch.rand_like(vectors) * std
+        return vectors
+
+    @torch.no_grad()
+    def _restart_unused_codes_if_needed(
+        self, batch: torch.Tensor, assignments: torch.Tensor
+    ) -> int:
+        if not self.training or not self.restart_unused_codes:
+            return 0
+
+        vectors = batch.reshape(-1, self.n_features).detach()
+        if vectors.shape[0] == 0:
+            return 0
+        if vectors.shape[0] < self.n_clusters:
+            vectors = self._tile_with_noise(vectors, self.n_clusters)
+
+        n_vectors = vectors.shape[0]
+        random_vectors = vectors[torch.randperm(n_vectors, device=vectors.device)][
+            : self.n_clusters
+        ]
+        random_vectors = random_vectors.to(
+            device=self.centroids.device, dtype=self.centroids.dtype
+        )
+
+        used_mask = torch.zeros(
+            self.n_clusters, dtype=torch.bool, device=self.centroids.device
+        )
+        used_ids = torch.unique(assignments.reshape(-1)).to(device=self.centroids.device)
+        used_mask[used_ids] = True
+        unused_mask = ~used_mask
+        restart_count = int(unused_mask.sum().item())
+
+        if restart_count > 0:
+            self.centroids.data[unused_mask] = random_vectors[unused_mask]
+
+            trainer = getattr(self, "_trainer", None)
+            if trainer is not None and getattr(getattr(trainer, "model", None), "verbose", False):
+                logging.info(
+                    "Device %s: Restarted %s unused codes in VectorQuantization",
+                    self.device,
+                    restart_count,
+                )
+
+        return restart_count
 
     def forward(
         self, batch: torch.Tensor
@@ -121,6 +181,10 @@ class VectorQuantization(BaseClusteringModule):
             return self.initialization_step(batch)
 
         assignments, embeddings, reconstruction_loss_embeddings = self.forward(batch)
+        self.last_restart_count = self._restart_unused_codes_if_needed(batch, assignments)
+        if self.last_restart_count > 0:
+            assignments, embeddings, reconstruction_loss_embeddings = self.forward(batch)
+
         loss = self.loss_function(batch, embeddings)  # quantization loss
         return (
             assignments,
