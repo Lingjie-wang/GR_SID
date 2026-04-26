@@ -1,4 +1,5 @@
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -53,6 +54,22 @@ class CustomMeanReductionMetric(torchmetrics.Metric):
 
     def update(self) -> None:
         raise NotImplementedError
+
+
+class MaskedMeanMetric(CustomMeanReductionMetric):
+    """Mean metric over a masked subset of samples."""
+
+    def update(self, values: torch.Tensor, mask: torch.Tensor, **kwargs) -> None:
+        if values.numel() == 0:
+            return
+        values = values.to(self.device).float().reshape(-1)
+        mask = mask.to(self.device).bool().reshape(-1)
+        if values.shape[0] != mask.shape[0]:
+            raise ValueError("values and mask must have the same number of samples")
+
+        selected = values[mask]
+        self.metric_values += selected.sum().item()
+        self.total_values += int(mask.sum().item())
 
 
 class CustomRetrievalMetric(CustomMeanReductionMetric):
@@ -269,6 +286,11 @@ class SIDRetrievalEvaluator(Evaluator):
         self,
         metrics: Dict[str, CustomRetrievalMetric],
         top_k_list: List[int],
+        enable_genret_in_test: bool = False,
+        genret_in_test_train_data_folder: Optional[str] = None,
+        genret_in_test_sid_map: Optional[torch.Tensor] = None,
+        genret_in_test_train_feature_name: str = "sequence_data",
+        genret_in_test_max_files: Optional[int] = None,
     ):
         self.metrics = {
             f"{metric_name}@{top_k}": metric_object(
@@ -277,6 +299,76 @@ class SIDRetrievalEvaluator(Evaluator):
             for metric_name, metric_object in metrics.items()
             for top_k in top_k_list
         }
+        self.enable_genret_in_test = enable_genret_in_test
+        self.genret_in_test_train_data_folder = genret_in_test_train_data_folder
+        self.genret_in_test_train_feature_name = genret_in_test_train_feature_name
+        self.genret_in_test_max_files = genret_in_test_max_files
+        self._train_seen_sid_set: Optional[Set[Tuple[int, ...]]] = None
+
+        self._genret_in_test_sid_map = (
+            genret_in_test_sid_map.long().t().contiguous()
+            if genret_in_test_sid_map is not None
+            else None
+        )
+
+        if self.enable_genret_in_test:
+            self.metrics["genret_in_test"] = MaskedMeanMetric(
+                sync_on_compute=False,
+                compute_with_cache=False,
+            )
+
+    def _list_tfrecord_files(self, data_folder: str, max_files: Optional[int]) -> List[str]:
+        root = Path(data_folder)
+        files = sorted(root.rglob("*.tfrecord.gz"))
+        if max_files is not None:
+            files = files[:max_files]
+        return [str(path) for path in files]
+
+    def _extract_train_seen_item_ids(self, file_paths: List[str], feature_name: str) -> Set[int]:
+        # TensorFlow is imported lazily to avoid adding hard dependency at module import time.
+        import tensorflow as tf
+
+        seen_item_ids: Set[int] = set()
+        for file_path in file_paths:
+            dataset = tf.data.TFRecordDataset([file_path], compression_type="GZIP")
+            for raw_record in dataset:
+                example = tf.train.Example()
+                example.ParseFromString(raw_record.numpy())
+                feature = example.features.feature.get(feature_name)
+                if feature is None:
+                    continue
+                seen_item_ids.update(int(v) for v in feature.int64_list.value)
+        return seen_item_ids
+
+    def _build_train_seen_sid_set(self) -> None:
+        if self._train_seen_sid_set is not None:
+            return
+
+        self._train_seen_sid_set = set()
+        if (
+            self.genret_in_test_train_data_folder is None
+            or self._genret_in_test_sid_map is None
+        ):
+            return
+
+        file_paths = self._list_tfrecord_files(
+            data_folder=self.genret_in_test_train_data_folder,
+            max_files=self.genret_in_test_max_files,
+        )
+        if not file_paths:
+            return
+
+        seen_item_ids = self._extract_train_seen_item_ids(
+            file_paths=file_paths,
+            feature_name=self.genret_in_test_train_feature_name,
+        )
+
+        num_items = self._genret_in_test_sid_map.shape[0]
+        for item_id in seen_item_ids:
+            if item_id < 0 or item_id >= num_items:
+                continue
+            sid = tuple(int(v) for v in self._genret_in_test_sid_map[item_id].tolist())
+            self._train_seen_sid_set.add(sid)
 
     def __call__(
         self,
@@ -307,8 +399,33 @@ class SIDRetrievalEvaluator(Evaluator):
         )
 
         for _, metric_object in self.metrics.items():
-            metric_object.update(
-                preds,
-                target.to(preds.device),
-                indexes=expanded_indexes.to(preds.device),
-            )
+            if isinstance(metric_object, CustomRetrievalMetric):
+                metric_object.update(
+                    preds,
+                    target.to(preds.device),
+                    indexes=expanded_indexes.to(preds.device),
+                )
+
+        if self.enable_genret_in_test:
+            self._build_train_seen_sid_set()
+            genret_metric = self.metrics.get("genret_in_test")
+            if isinstance(genret_metric, MaskedMeanMetric):
+                labels_per_sample = labels.reshape(batch_size, num_hierarchies)
+                if self._train_seen_sid_set:
+                    seen_mask = torch.tensor(
+                        [
+                            tuple(int(v) for v in sid_row.tolist())
+                            in self._train_seen_sid_set
+                            for sid_row in labels_per_sample.cpu()
+                        ],
+                        device=preds.device,
+                        dtype=torch.bool,
+                    )
+                else:
+                    seen_mask = torch.zeros(batch_size, device=preds.device).bool()
+
+                hit_per_sample = torch.zeros(batch_size, device=preds.device).bool()
+                if matched_id_coord.numel() > 0:
+                    hit_per_sample[matched_id_coord[:, 0]] = True
+
+                genret_metric.update(hit_per_sample.float(), seen_mask)

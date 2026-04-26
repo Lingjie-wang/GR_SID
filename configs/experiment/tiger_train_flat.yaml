@@ -325,6 +325,10 @@ optim:
 eval:
   evaluator:
     _target_: src.components.eval_metrics.SIDRetrievalEvaluator
+    enable_genret_in_test: true
+    genret_in_test_train_data_folder: ${data_loading.train_dataloader_config.dataloader.data_folder}
+    genret_in_test_sid_map: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map.sequence_data}
+    genret_in_test_train_feature_name: sequence_data
     top_k_list:
     - 5
     - 10
