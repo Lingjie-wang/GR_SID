@@ -3,6 +3,7 @@ import logging
 from typing import Optional, Tuple
 
 import torch
+import torch.distributed as dist
 
 from src.components.distance_functions import DistanceFunction
 from src.components.clustering_initializers import ClusteringInitializer
@@ -27,6 +28,8 @@ class VectorQuantization(BaseClusteringModule):
         init_buffer_size: int = 1000,
         restart_unused_codes: bool = False,
         restart_noise_scale: float = 0.01,
+        restart_ema_decay: float = 0.99,
+        restart_usage_threshold: float = 1.0,
     ):
         """
         Initialize the VectorQuantization module.
@@ -41,6 +44,8 @@ class VectorQuantization(BaseClusteringModule):
             init_buffer_size: Number of points to buffer for initialization.
             restart_unused_codes: Whether to restart unused codes during training.
             restart_noise_scale: Scale of the noise to add when restarting unused codes.
+            restart_ema_decay: EMA decay used for code usage statistics.
+            restart_usage_threshold: Codes with EMA usage below this value are restarted.
         """
 
         super().__init__(
@@ -56,7 +61,10 @@ class VectorQuantization(BaseClusteringModule):
         self.quantization_strategy = quantization_strategy
         self.restart_unused_codes = restart_unused_codes
         self.restart_noise_scale = restart_noise_scale
+        self.restart_ema_decay = restart_ema_decay
+        self.restart_usage_threshold = restart_usage_threshold
         self.last_restart_count = 0
+        self.register_buffer("cluster_size_ema", torch.zeros(self.n_clusters))
 
     @torch.no_grad()
     def _tile_with_noise(self, vectors: torch.Tensor, target_n: int) -> torch.Tensor:
@@ -69,15 +77,53 @@ class VectorQuantization(BaseClusteringModule):
         return vectors
 
     @torch.no_grad()
+    def _update_cluster_size_ema(self, assignments: torch.Tensor) -> None:
+        """
+        Update EMA usage counts for each code in the current batch.
+        
+        Args:
+            assignments: Tensor of shape (batch_size,) containing the cluster assignment for each input point.
+        """
+        if assignments.numel() == 0:
+            return
+
+        flat_assignments = assignments.reshape(-1).to(device=self.centroids.device)
+        cluster_size = torch.bincount(
+            flat_assignments,
+            minlength=self.n_clusters,
+        ).to(device=self.centroids.device, dtype=self.cluster_size_ema.dtype) #* 计算每个聚类中心被分配的输入点数量
+
+        #* 分布式场景下做全局求和
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(cluster_size, op=dist.ReduceOp.SUM)
+
+        #* 更新 cluster_size_ema，使用指数移动平均来平滑每个聚类中心的使用频率。这样可以更稳定地判断哪些聚类中心是未使用的，从而决定是否需要重启它们。
+        self.cluster_size_ema.mul_(self.restart_ema_decay).add_(
+            cluster_size,
+            alpha=1.0 - self.restart_ema_decay,
+        )
+
+    @torch.no_grad()
     def _restart_unused_codes_if_needed(
         self, batch: torch.Tensor, assignments: torch.Tensor
     ) -> int:
+        '''
+        Restart unused codes with random vectors from the current batch if needed.
+
+        Args:
+            batch: Tensor of shape (batch_size, n_features) containing the input data points.
+            assignments: Tensor of shape (batch_size,) containing the cluster assignment for each input point.
+        '''
+
+        #* 只有在训练阶段并且设置了 restart_unused_codes 时才会执行重启未使用的代码
         if not self.training or not self.restart_unused_codes:
             return 0
 
         vectors = batch.reshape(-1, self.n_features).detach()
         if vectors.shape[0] == 0:
             return 0
+        
+        #? 如果输入的向量数量少于聚类中心的数量，我们需要通过重复输入向量并添加噪声来生成足够的候选重启向量。这是为了确保我们有足够的候选向量来替换未使用的聚类中心。
         if vectors.shape[0] < self.n_clusters:
             vectors = self._tile_with_noise(vectors, self.n_clusters)
 
@@ -89,16 +135,25 @@ class VectorQuantization(BaseClusteringModule):
             device=self.centroids.device, dtype=self.centroids.dtype
         )
 
-        used_mask = torch.zeros(
-            self.n_clusters, dtype=torch.bool, device=self.centroids.device
-        )
-        used_ids = torch.unique(assignments.reshape(-1)).to(device=self.centroids.device)
-        used_mask[used_ids] = True
-        unused_mask = ~used_mask
-        restart_count = int(unused_mask.sum().item())
+        if dist.is_available() and dist.is_initialized():
+            dist.broadcast(random_vectors, src=0)
+
+        self._update_cluster_size_ema(assignments)
+        
+        #* 按照 EMA 判死码
+        usage = (
+            self.cluster_size_ema.view(-1, 1) >= self.restart_usage_threshold
+        ).to(dtype=random_vectors.dtype)
+        unused_mask = ~(usage.view(-1).bool())
+        restart_count = int(unused_mask.sum().item()) #* 未使用的码字数量
 
         if restart_count > 0:
-            self.centroids.data[unused_mask] = random_vectors[unused_mask]
+            # Keep used codes as-is and only replace dead codes with sampled vectors.
+            self.centroids.data.mul_(usage).add_(random_vectors * (1.0 - usage))
+            # After restart, reset EMA usage of revived codes so they are treated as active.
+            self.cluster_size_ema.mul_(usage.view(-1)).add_(
+                (1.0 - usage).view(-1) * self.restart_usage_threshold
+            )
 
             trainer = getattr(self, "_trainer", None)
             if trainer is not None and getattr(getattr(trainer, "model", None), "verbose", False):

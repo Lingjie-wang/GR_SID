@@ -18,7 +18,7 @@ conda activate grid
 
 # 执行你的程序
 python src/train.py experiment=rqvae_train_flat \
-    data_dir=data/amazon_data/Beauty \
+    data_dir=data/amazon_data/beauty \
     embedding_path=logs/inference/runs/2026-03-13/11-09-53/pickle/merged_predictions_tensor.pt \
     embedding_dim=2048 \
     num_hierarchies=3 \
